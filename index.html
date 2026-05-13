@@ -157,10 +157,10 @@
       .btn:active { transform: scale(0.97); }
       .btn:disabled { opacity: 0.55; cursor: not-allowed; transform: none; }
 
-      .btn-primary { background: var(--primary); color: var(--white); }
+      .btn-primary { background: #8B5CF6; color: var(--white); }
       .btn-primary:hover:not(:disabled) { background: var(--primary-dark); box-shadow: 0 3px 10px rgba(139,92,246,0.3); }
 
-      .btn-success { background: var(--success); color: var(--white); }
+      .btn-success { background: #F59E0B; color: var(--white); }
       .btn-success:hover:not(:disabled) { background: #D97706; box-shadow: 0 3px 10px rgba(245,158,11,0.3); }
 
       .btn-danger { background: var(--danger); color: var(--white); }
@@ -613,7 +613,7 @@
             '<td>' +
               '<div class="actions">' +
                 '<button class="btn btn-success btn-sm" onclick="openEdit(' + c.id + ')">&#9998; Edit</button>' +
-                '<button class="btn btn-danger btn-sm" onclick="deleteCourse(' + c.id + ', \'' + esc(c.name).replace(/'/g, "\\'") + '\')">&#128465; Remove</button>' +
+                '<button class="btn-danger" onclick="handleDelete(' + c.id + ', \'' + esc(c.name).replace(/'/g, "\\'") + '\')">Remove</button>' +
               '</div>' +
             '</td>' +
           '</tr>'
@@ -758,7 +758,7 @@
         }
       }
 
-      async function deleteCourse(id, name) {
+      async function handleDelete(id, name) {
         if (!confirm('Remove "' + name + '"?\n\nThis action cannot be undone.')) return;
         try {
           await apiFetch(API + '/' + id, { method: 'DELETE' });
