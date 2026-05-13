@@ -1,267 +1,276 @@
-// app.js
-// Simple CodeCraftHub REST API for managing courses using a JSON file as storage.
-// Requirements satisfied:
-// - Express REST API with CRUD for courses
-// - Data stored in courses.json (auto-created if missing)
-// - Endpoints: POST /api/courses, GET /api/courses, GET /api/courses/:id, PUT /api/courses/:id, DELETE /api/courses/:id
-// - Course fields: id (auto-increment starting at 1), name, description, target_date (YYYY-MM-DD),
-//   status (Not Started, In Progress, Completed), created_at (timestamp)
-// - Proper error handling and helpful comments
-// - Server runs on port 5000
-
-'use strict';
-
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
 
-// Create the Express app
 const app = express();
 
-// Middleware to parse JSON bodies
+// Configuration
+const DATA_FILE = path.join(__dirname, 'courses.json');
+const PORT = 5000;
+
+// Middleware to parse JSON request bodies
 app.use(express.json());
 
-// Path to the data file (courses.json) stored in the project root
-const DATA_FILE = path.join(__dirname, 'courses.json');
-
-// Allowed status values
-const ALLOWED_STATUS = new Set(['Not Started', 'In Progress', 'Completed']);
-
-// Ensure the data file exists; create it with an empty array if missing
-async function ensureDataFile() {
-  try {
-    await fs.promises.access(DATA_FILE, fs.constants.F_OK);
-  } catch {
-    // If file doesn't exist, create it with an empty array
-    await fs.promises.writeFile(DATA_FILE, JSON.stringify([]), 'utf8');
-  }
-}
-
-// Read all courses from the JSON file
-async function readAllCourses() {
-  await ensureDataFile();
-  const content = await fs.promises.readFile(DATA_FILE, 'utf8');
-  try {
-    const data = JSON.parse(content);
-    if (Array.isArray(data)) return data;
-    // If JSON is not an array, reset to empty array
-    await fs.promises.writeFile(DATA_FILE, JSON.stringify([]), 'utf8');
-    return [];
-  } catch {
-    // If JSON is corrupted, reset to empty array
-    await fs.promises.writeFile(DATA_FILE, JSON.stringify([]), 'utf8');
-    return [];
-  }
-}
-
-// Write all courses to the JSON file
-async function writeAllCourses(courses) {
-  await ensureDataFile();
-  await fs.promises.writeFile(DATA_FILE, JSON.stringify(courses, null, 2), 'utf8');
-}
-
-// Validate that a date string is in YYYY-MM-DD and represents a real date
-function isValidDateYYYYMMDD(dateStr) {
-  if (typeof dateStr !== 'string') return false;
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return false;
-
-  const d = new Date(dateStr);
-  if (Number.isNaN(d.getTime())) return false;
-
-  // Extra check to ensure components match (e.g., 2023-02-31 would become 2023-03-03)
-  const [year, month, day] = dateStr.split('-').map(Number);
-  return d.getUTCFullYear() === year && (d.getUTCMonth() + 1) === month && d.getUTCDate() === day;
-}
-
-// Validate payload for create/update
-function validatePayload(payload) {
-  if (!payload || typeof payload !== 'object') {
-    return { ok: false, error: 'Invalid payload' };
-  }
-
-  const { name, description, target_date, status } = payload;
-
-  if (!name || typeof name !== 'string') return { ok: false, error: 'name is required' };
-  if (!description || typeof description !== 'string') return { ok: false, error: 'description is required' };
-  if (!target_date || !isValidDateYYYYMMDD(target_date)) {
-    return { ok: false, error: 'target_date is required and must be in YYYY-MM-DD format' };
-  }
-  if (!status || !ALLOWED_STATUS.has(status)) {
-    return {
-      ok: false,
-      error: `status must be one of ${Array.from(ALLOWED_STATUS).join(', ')}`
-    };
-  }
-
-  return { ok: true };
-}
-
-// Create a new course with auto-incremented id and created_at timestamp
-async function createCourse(payload) {
-  const courses = await readAllCourses();
-
-  // Determine next id (max existing id + 1, or 1 if none)
-  const maxId = courses.reduce((max, c) => Math.max(max, typeof c.id === 'number' ? c.id : 0), 0);
-  const newId = maxId + 1;
-
-  const newCourse = {
-    id: newId,
-    name: payload.name,
-    description: payload.description,
-    target_date: payload.target_date,
-    status: payload.status,
-    created_at: new Date().toISOString()
-  };
-
-  courses.push(newCourse);
-  await writeAllCourses(courses);
-  return newCourse;
-}
-
-// Update an existing course by id
-async function updateCourse(id, payload) {
-  const courses = await readAllCourses();
-  const idx = courses.findIndex(c => c.id === id);
-  if (idx === -1) return null;
-
-  // Preserve id and created_at; update other fields
-  const existing = courses[idx];
-  const updatedCourse = {
-    ...existing,
-    name: payload.name,
-    description: payload.description,
-    target_date: payload.target_date,
-    status: payload.status
-  };
-
-  courses[idx] = updatedCourse;
-  await writeAllCourses(courses);
-  return updatedCourse;
-}
-
-// Delete a course by id
-async function deleteCourse(id) {
-  const courses = await readAllCourses();
-  const idx = courses.findIndex(c => c.id === id);
-  if (idx === -1) return false;
-
-  courses.splice(idx, 1);
-  await writeAllCourses(courses);
-  return true;
-}
-
-// ----------------------
-// Routes (API endpoints)
-// ----------------------
-
-// Create a new course
-// POST /api/courses
-app.post('/api/courses', async (req, res) => {
-  try {
-    const payload = req.body;
-    const validation = validatePayload(payload);
-    if (!validation.ok) {
-      return res.status(400).json({ error: validation.error });
+// Allow browser access from local frontend (CORS)
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,OPTIONS');
+    res.header('Access-Control-Allow-Headers', 'Content-Type');
+    if (req.method === 'OPTIONS') {
+        return res.sendStatus(204);
     }
-
-    const newCourse = await createCourse(payload);
-    res.status(201).json(newCourse);
-  } catch (err) {
-    console.error('Error creating course:', err);
-    res.status(500).json({ error: 'Failed to create course due to server error' });
-  }
+    next();
 });
 
-// Get all courses
-// GET /api/courses
-app.get('/api/courses', async (req, res) => {
-  try {
-    const courses = await readAllCourses();
-    res.json(courses);
-  } catch (err) {
-    console.error('Error reading courses:', err);
-    res.status(500).json({ error: 'Failed to read courses' });
-  }
+// Helper function to load courses from JSON file
+function loadCourses() {
+    if (!fs.existsSync(DATA_FILE)) {
+        fs.writeFileSync(DATA_FILE, JSON.stringify([], null, 2));
+        return [];
+    }
+    
+    try {
+        const data = fs.readFileSync(DATA_FILE, 'utf8');
+        return JSON.parse(data);
+    } catch (error) {
+        console.error('Error loading courses:', error);
+        return [];
+    }
+}
+
+// Helper function to save courses to JSON file
+function saveCourses(courses) {
+    try {
+        fs.writeFileSync(DATA_FILE, JSON.stringify(courses, null, 2));
+        return true;
+    } catch (error) {
+        console.error('Error saving courses:', error);
+        return false;
+    }
+}
+
+// Get next available ID
+function getNextId(courses) {
+    if (courses.length === 0) {
+        return 1;
+    }
+    return Math.max(...courses.map(c => c.id)) + 1;
+}
+
+// GET all courses
+app.get('/api/courses', (req, res) => {
+    try {
+        const courses = loadCourses();
+        res.status(200).json({
+            success: true,
+            count: courses.length,
+            courses: courses
+        });
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: `Failed to retrieve courses: ${error.message}`
+        });
+    }
 });
 
-// Get a specific course by id
-// GET /api/courses/:id
-app.get('/api/courses/:id', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    if (!Number.isFinite(id)) {
-      return res.status(400).json({ error: 'Invalid course id' });
+// GET specific course
+app.get('/api/courses/:id', (req, res) => {
+    try {
+        const courseId = parseInt(req.params.id);
+        const courses = loadCourses();
+        const course = courses.find(c => c.id === courseId);
+        
+        if (course) {
+            res.status(200).json({
+                success: true,
+                course: course
+            });
+        } else {
+            res.status(404).json({
+                success: false,
+                error: `Course with ID ${courseId} not found`
+            });
+        }
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: `Failed to retrieve course: ${error.message}`
+        });
     }
-
-    const courses = await readAllCourses();
-    const course = courses.find(c => c.id === id);
-    if (!course) {
-      return res.status(404).json({ error: 'Course not found' });
-    }
-
-    res.json(course);
-  } catch (err) {
-    console.error('Error reading course:', err);
-    res.status(500).json({ error: 'Failed to read course' });
-  }
 });
 
-// Update a course by id
-// PUT /api/courses/:id
-app.put('/api/courses/:id', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    if (!Number.isFinite(id)) {
-      return res.status(400).json({ error: 'Invalid course id' });
+// POST new course
+app.post('/api/courses', (req, res) => {
+    try {
+        const data = req.body;
+        
+        if (!data || Object.keys(data).length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'No data provided'
+            });
+        }
+        
+        // Validate required fields
+        const requiredFields = ['name', 'description', 'target_date', 'status'];
+        const missingFields = requiredFields.filter(field => !data[field]);
+        
+        if (missingFields.length > 0) {
+            return res.status(400).json({
+                success: false,
+                error: `Missing required fields: ${missingFields.join(', ')}`
+            });
+        }
+        
+        // Validate status
+        const validStatuses = ['Not Started', 'In Progress', 'Completed'];
+        if (!validStatuses.includes(data.status)) {
+            return res.status(400).json({
+                success: false,
+                error: `Status must be one of: ${validStatuses.join(', ')}`
+            });
+        }
+        
+        const courses = loadCourses();
+        
+        const newCourse = {
+            id: getNextId(courses),
+            name: data.name,
+            description: data.description,
+            target_date: data.target_date,
+            status: data.status,
+            created_at: new Date().toISOString().replace('T', ' ').substring(0, 19)
+        };
+        
+        courses.push(newCourse);
+        
+        if (saveCourses(courses)) {
+            res.status(201).json({
+                success: true,
+                message: 'Course added successfully',
+                course: newCourse
+            });
+        } else {
+            res.status(500).json({
+                success: false,
+                error: 'Failed to save course'
+            });
+        }
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: `Failed to add course: ${error.message}`
+        });
     }
-
-    const payload = req.body;
-    const validation = validatePayload(payload);
-    if (!validation.ok) {
-      return res.status(400).json({ error: validation.error });
-    }
-
-    const updated = await updateCourse(id, payload);
-    if (!updated) {
-      return res.status(404).json({ error: 'Course not found' });
-    }
-
-    res.json(updated);
-  } catch (err) {
-    console.error('Error updating course:', err);
-    res.status(500).json({ error: 'Failed to update course' });
-  }
 });
 
-// Delete a course by id
-// DELETE /api/courses/:id
-app.delete('/api/courses/:id', async (req, res) => {
-  try {
-    const id = Number(req.params.id);
-    if (!Number.isFinite(id)) {
-      return res.status(400).json({ error: 'Invalid course id' });
+// PUT update course
+app.put('/api/courses/:id', (req, res) => {
+    try {
+        const courseId = parseInt(req.params.id);
+        const data = req.body;
+        
+        if (!data || Object.keys(data).length === 0) {
+            return res.status(400).json({
+                success: false,
+                error: 'No data provided'
+            });
+        }
+        
+        const courses = loadCourses();
+        const courseIndex = courses.findIndex(c => c.id === courseId);
+        
+        if (courseIndex === -1) {
+            return res.status(404).json({
+                success: false,
+                error: `Course with ID ${courseId} not found`
+            });
+        }
+        
+        // Validate status if being updated
+        if (data.status) {
+            const validStatuses = ['Not Started', 'In Progress', 'Completed'];
+            if (!validStatuses.includes(data.status)) {
+                return res.status(400).json({
+                    success: false,
+                    error: `Status must be one of: ${validStatuses.join(', ')}`
+                });
+            }
+        }
+        
+        // Update course fields
+        const course = courses[courseIndex];
+        if (data.name) course.name = data.name;
+        if (data.description) course.description = data.description;
+        if (data.target_date) course.target_date = data.target_date;
+        if (data.status) course.status = data.status;
+        
+        courses[courseIndex] = course;
+        
+        if (saveCourses(courses)) {
+            res.status(200).json({
+                success: true,
+                message: 'Course updated successfully',
+                course: course
+            });
+        } else {
+            res.status(500).json({
+                success: false,
+                error: 'Failed to save changes'
+            });
+        }
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: `Failed to update course: ${error.message}`
+        });
     }
-
-    const deleted = await deleteCourse(id);
-    if (!deleted) {
-      return res.status(404).json({ error: 'Course not found' });
-    }
-
-    res.status(204).end();
-  } catch (err) {
-    console.error('Error deleting course:', err);
-    res.status(500).json({ error: 'Failed to delete course' });
-  }
 });
 
-// ----------------------
+// DELETE course
+app.delete('/api/courses/:id', (req, res) => {
+    try {
+        const courseId = parseInt(req.params.id);
+        const courses = loadCourses();
+        const courseIndex = courses.findIndex(c => c.id === courseId);
+        
+        if (courseIndex === -1) {
+            return res.status(404).json({
+                success: false,
+                error: `Course with ID ${courseId} not found`
+            });
+        }
+        
+        const deletedCourse = courses.splice(courseIndex, 1)[0];
+        
+        if (saveCourses(courses)) {
+            res.status(200).json({
+                success: true,
+                message: 'Course deleted successfully',
+                deleted_course: deletedCourse
+            });
+        } else {
+            res.status(500).json({
+                success: false,
+                error: 'Failed to save changes'
+            });
+        }
+    } catch (error) {
+        res.status(500).json({
+            success: false,
+            error: `Failed to delete course: ${error.message}`
+        });
+    }
+});
+
 // Start the server
-// ----------------------
-
-// Port 5000 as requested
-const PORT = 5000;
 app.listen(PORT, () => {
-  console.log(`CodeCraftHub API is running on http://localhost:${PORT}/api`);
-  // Optional: ensure the data file exists on startup
-  ensureDataFile().catch((err) => console.error('Failed to ensure data file on startup:', err));
+    console.log('='.repeat(60));
+    console.log('CodeCraftHub API is starting...');
+    console.log('='.repeat(60));
+    console.log(`Data will be stored in: ${path.resolve(DATA_FILE)}`);
+    console.log(`API is available at: http://localhost:${PORT}`);
+    console.log('='.repeat(60));
+    console.log('\nPress CTRL+C to stop the server\n');
 });
